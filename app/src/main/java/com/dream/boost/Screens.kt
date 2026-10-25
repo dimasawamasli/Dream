@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,7 +52,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -133,6 +136,10 @@ private val GAME_CHOICES = listOf(
 // State aplikasi
 // ------------------------------------------------------------------
 
+// nama mode di log: KENPOL -> MAXIMALITY
+private fun brand(s: String): String =
+    s.replace("K E N P O L", "M A X I M A L I T Y").replace("KENPOL", "MAXIMALITY")
+
 class AppState(private val prefs: SharedPreferences) {
     val enabled = mutableStateMapOf<String, Boolean>().apply {
         FEATURES.forEach { put(it.key, prefs.getBoolean(it.key, it.default)) }
@@ -140,6 +147,9 @@ class AppState(private val prefs: SharedPreferences) {
     var dnd by mutableStateOf(prefs.getString("dnd", "priority") ?: "priority")
     var game by mutableStateOf(prefs.getString("game", "") ?: "")
     var running by mutableStateOf(false)
+    var onLogScreen by mutableStateOf(false)
+    var lastCode by mutableStateOf<Int?>(null)
+    var lastAction by mutableStateOf("")
     val log = mutableStateListOf<String>()
 
     fun isOn(key: String): Boolean = enabled[key] == true
@@ -159,7 +169,7 @@ class AppState(private val prefs: SharedPreferences) {
         prefs.edit().putString("game", v).apply()
     }
 
-    /** Kenpol = semua default aktif. Aman = tanpa force-stop, GOS, dan blok background. */
+    /** Maximality = semua default aktif. Aman = tanpa force-stop, GOS, dan blok background. */
     fun preset(safe: Boolean) {
         FEATURES.forEach { set(it.key, it.default) }
         if (safe) {
@@ -169,11 +179,18 @@ class AppState(private val prefs: SharedPreferences) {
         }
     }
 
-    /** mode: "" = boost, "status", "off" */
+    /** mode: "" = boost, "status", "off". Setelah ditekan, pindah ke layar log. */
     fun run(ctx: Context, scope: CoroutineScope, mode: String) {
         if (running) return
         running = true
+        lastCode = null
+        lastAction = when (mode) {
+            "status" -> "Status"
+            "off" -> "Kembalikan"
+            else -> "Boost"
+        }
         log.clear()
+        onLogScreen = true
         val flags = FEATURES.associate { it.key to isOn(it.key) }
         val d = dnd
         val g = game
@@ -182,7 +199,7 @@ class AppState(private val prefs: SharedPreferences) {
                 try {
                     ShizukuShell.pushScript(ctx)
                     ShizukuShell.runScript(mode, flags, d, g) { line ->
-                        scope.launch(Dispatchers.Main) { log.add(line) }
+                        scope.launch(Dispatchers.Main) { log.add(brand(line)) }
                     }
                 } catch (t: Throwable) {
                     scope.launch(Dispatchers.Main) { log.add("ERROR: ${t.javaClass.simpleName}: ${t.message}") }
@@ -190,6 +207,7 @@ class AppState(private val prefs: SharedPreferences) {
                 }
             }
             log.add("-- selesai (kode $code) --")
+            lastCode = code
             running = false
         }
     }
@@ -225,20 +243,27 @@ fun DreamApp() {
     val stage = when {
         !unlocked -> 0
         sz != SzState.READY -> 1
+        st.onLogScreen -> 3
         else -> 2
     }
     val holeY = when (stage) {
         0 -> 0.27f
         1 -> 0.24f
+        3 -> 0.09f
         else -> 0.13f
     }
-    val holeScale = if (stage == 2) 0.7f else 1f
+    val holeScale = when (stage) {
+        2 -> 0.7f
+        3 -> 0.5f
+        else -> 1f
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         SpaceBackground(holeY = holeY, holeScale = holeScale)
         when (stage) {
             0 -> LoginScreen(onOk = { unlocked = true })
             1 -> ShizukuGate(sz)
+            3 -> LogScreen(st)
             else -> MainScreen(st)
         }
     }
@@ -486,9 +511,9 @@ private fun ShizukuGate(sz: SzState) {
             Text(hint, color = Lav.copy(alpha = 0.8f), fontSize = 13.sp, lineHeight = 18.sp)
             if (!running) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lewat ADB: adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh",
-                    color = Violet,
+                Text
+                    "Lewat ADB: adb shell sh /sdcard/Android/data/moe.shizuku.privilage.api/start.sh",
+                color = Violet,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
                     fontFamily = FontFamily.Monospace
@@ -547,7 +572,7 @@ private fun MainScreen(st: AppState) {
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlineButton("Kenpol: semua", Modifier.weight(1f), !st.running) { st.preset(false) }
+            OutlineButton("Maximality", Modifier.weight(1f), !st.running) { st.preset(false) }
             OutlineButton("Mode aman", Modifier.weight(1f), !st.running) { st.preset(true) }
         }
 
@@ -602,33 +627,100 @@ private fun MainScreen(st: AppState) {
             OutlineButton("Status", Modifier.weight(1f), !st.running) { st.run(ctx, scope, "status") }
             OutlineButton("Kembalikan", Modifier.weight(1f), !st.running) { st.run(ctx, scope, "off") }
         }
-        if (st.running) {
-            OutlineButton("Hentikan", Modifier.fillMaxWidth()) { ShizukuShell.stop() }
-        }
-
-        Glass(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Log", color = Lav, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "Bersihkan",
-                    color = Violet,
-                    fontSize = 12.sp,
-                    modifier = Modifier.clickable(enabled = !st.running) { st.log.clear() }.padding(6.dp)
-                )
-            }
-            val logScroll = rememberScrollState()
-            LaunchedEffect(st.log.size) { logScroll.animateScrollTo(logScroll.maxValue) }
-            Box(Modifier.fillMaxWidth().height(260.dp).verticalScroll(logScroll)) {
-                Text(
-                    if (st.log.isEmpty()) "Belum ada output. Tekan Jalankan boost atau Status." else st.log.joinToString("\n"),
-                    color = Color(0xFFD8B4FE),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp
-                )
-            }
+        if (st.running || st.log.isNotEmpty()) {
+            OutlineButton("Lihat log", Modifier.fillMaxWidth()) { st.onLogScreen = true }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ------------------------------------------------------------------
+// Layar 4: log (muncul setelah menekan Jalankan boost, Status, atau Kembalikan)
+// ------------------------------------------------------------------
+
+@Composable
+private fun StatusPill(running: Boolean, code: Int?) {
+    val (label, col) = when {
+        running -> "Berjalan" to Amber
+        code == null -> "Siap" to Lav
+        code == 0 -> "Selesai" to Mint
+        code == -1 -> "Gagal" to Rose
+        else -> "Selesai (kode $code)" to Amber
+    }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(col.copy(alpha = 0.2f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(col))
+        Spacer(Modifier.width(8.dp))
+        Text(label, color = col, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun LogScreen(st: AppState) {
+    BackHandler { st.onLogScreen = false }
+    val clipboard = LocalClipboardManager.current
+    val scroll = rememberScrollState()
+    LaunchedEffect(st.log.size) { scroll.animateScrollTo(scroll.maxValue) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "< Kembali",
+                color = Lav,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { st.onLogScreen = false }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            )
+            Spacer(Modifier.weight(1f))
+            StatusPill(st.running, st.lastCode)
+        }
+
+        Text(
+            if (st.lastAction.isEmpty()) "Log" else "Log: ${st.lastAction}",
+            color = Color.White,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+
+        Glass(Modifier.fillMaxWidth().weight(1f)) {
+            Box(Modifier.fillMaxSize().verticalScroll(scroll)) {
+                Text(
+                    if (st.log.isEmpty()) "Belum ada output." else st.log.joinToString("\n"),
+                    color = Color(0xFFD8B4FE),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (st.running) {
+                OutlineButton("Hentikan", Modifier.weight(1f)) { ShizukuShell.stop() }
+            } else {
+                OutlineButton("Salin log", Modifier.weight(1f), st.log.isNotEmpty()) {
+                    clipboard.setText(AnnotatedString(st.log.joinToString("\n")))
+                }
+                OutlineButton("Bersihkan", Modifier.weight(1f), st.log.isNotEmpty()) {
+                    st.log.clear()
+                    st.lastCode = null
+                }
+            }
+        }
     }
 }
