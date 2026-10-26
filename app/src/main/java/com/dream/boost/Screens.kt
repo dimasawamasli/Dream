@@ -405,6 +405,9 @@ private fun FeatureRow(f: Feature, checked: Boolean, enabled: Boolean, onChange:
     }
 }
 
+// ===== lanjut ke bagian 2 =====
+// ===== bagian 2 =====
+
 // ------------------------------------------------------------------
 // Layar 1: password
 // ------------------------------------------------------------------
@@ -511,9 +514,9 @@ private fun ShizukuGate(sz: SzState) {
             Text(hint, color = Lav.copy(alpha = 0.8f), fontSize = 13.sp, lineHeight = 18.sp)
             if (!running) {
                 Spacer(Modifier.height(8.dp))
-                Text
-                    "Lewat ADB: adb shell sh /sdcard/Android/data/moe.shizuku.privilage.api/start.sh",
-                color = Violet,
+                Text(
+                    "Lewat ADB: adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh",
+                    color = Violet,
                     fontSize = 11.sp,
                     lineHeight = 15.sp,
                     fontFamily = FontFamily.Monospace
